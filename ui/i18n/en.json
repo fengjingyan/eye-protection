@@ -1,0 +1,34 @@
+{
+  "settings": {
+    "title": "Eye Protection - Settings",
+    "workTime": "Continuous use time (minutes)",
+    "restTime": "Rest time (minutes)",
+    "opacity": "Reminder window opacity",
+    "autoStart": "Auto start at login",
+    "ok": "OK",
+    "apply": "Apply",
+    "cancel": "Cancel",
+    "save": "Save settings",
+    "saved": "Settings saved!",
+    "save_failed": "Save failed: {err}"
+  },
+  "reminder": {
+    "title": "Time to rest!",
+    "message": "Long computer use is bad for eyes, please take a break",
+    "restInfo": "Look away from the screen, relax your eyes\nor do some simple eye exercises",
+    "close": "End rest"
+  }
+  ,
+  "tray": {
+    "work_timer": "Work Duration",
+    "settings": "Settings",
+    "rest_now": "Rest Now",
+    "about": "About",
+    "quit": "Quit"
+  },
+  "about": {
+    "title": "About EyeProtection",
+    "license": "License Info...",
+    "close": "Close"
+  }
+}

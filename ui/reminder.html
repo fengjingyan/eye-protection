@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="reminder.title">休息时间到了！</title>
+    <link rel="icon" href="/favicon.ico">
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: rgba(0, 128, 128, 0.8);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            user-select: none;
+            overflow: hidden;
+        }
+        
+        .reminder-container {
+            text-align: center;
+            max-width: 600px;
+            padding: 40px;
+            background-color: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            animation: pulse 2s infinite;
+        }
+        
+        p {
+            font-size: 24px;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+        
+        .rest-info {
+            font-size: 18px;
+            margin-bottom: 40px;
+            opacity: 0.9;
+        }
+        
+        .btn {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid white;
+            padding: 12px 30px;
+            font-size: 18px;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 0 10px;
+        }
+        
+        .btn:hover {
+            background-color: white;
+            color: #008080;
+            transform: scale(1.05);
+        }
+        
+        .btn:active {
+            transform: scale(0.95);
+        }
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+        
+        .countdown {
+            font-size: 72px;
+            font-weight: bold;
+            margin: 20px 0;
+            color: #ffeb3b;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="reminder-container">
+        <h1 data-i18n="reminder.title">休息时间到了！</h1>
+        <p data-i18n="reminder.message">长时间使用电脑对眼睛不好，建议您休息一下</p>
+        <div class="rest-info" data-i18n="reminder.restInfo">
+            请远离电脑，看看远处，放松眼睛<br>
+            或者做一些简单的眼部保健操
+        </div>
+        <div class="countdown" id="countdown"></div>
+        <button class="btn" id="closeBtn" data-i18n="reminder.close">结束休息</button>
+    </div>
+    <script src="i18n.js"></script>
+    <script>
+        window.__i18n.loadLocale().then(i18n => window.__i18n.applyTranslations(i18n));
+    </script>
+    <script src="reminder.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[package]
+name = "eye-protection"
+version = "0.1.0"
+description = "Eye Protection App"
+authors = ["You"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1", features = [ "window-all", "system-tray", "shell-open", "custom-protocol"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rdev = "0.5"
+chrono = "0.4"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
