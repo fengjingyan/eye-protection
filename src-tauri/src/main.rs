@@ -27,7 +27,7 @@ struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            work_time: 25,
+            work_time: 40,
             rest_time: 5,
             opacity: 0.8,
             auto_start: false,
@@ -41,43 +41,65 @@ struct AppState {
     last_activity: Mutex<Instant>,
     accumulated_work_time: Mutex<Duration>,
     is_resting: Mutex<bool>,
+    locale: Mutex<Value>,
 }
 
 // helper: load locale json from ui/i18n
-fn load_locale(app_handle: &tauri::AppHandle, lang: &str) -> Option<Value> {
+fn load_locale(app_handle: Option<&tauri::AppHandle>, lang: &str) -> Option<Value> {
     let candidates = [
         lang.to_string(),
         lang.split('-').next().unwrap_or("").to_string(),
         "zh-CN".to_string(),
+        "en".to_string(),
     ];
     
     for c in &candidates {
+        if c.is_empty() { continue; }
+        
         // 1. Try resolve via Tauri resource (for bundled app)
-        let resource_paths = [
-            format!("ui/i18n/{}.json", c),
-            format!("i18n/{}.json", c),
-            format!("{}.json", c),
-        ];
-        for rp in &resource_paths {
-            if let Some(p) = app_handle.path_resolver().resolve_resource(rp) {
-                if let Ok(s) = std::fs::read_to_string(p) {
-                    if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                        return Some(v);
+        if let Some(handle) = app_handle {
+            let resource_paths = [
+                format!("ui/i18n/{}.json", c),
+                format!("i18n/{}.json", c),
+                format!("{}.json", c),
+            ];
+            for rp in &resource_paths {
+                if let Some(p) = handle.path_resolver().resolve_resource(rp) {
+                    if let Ok(s) = std::fs::read_to_string(p) {
+                        if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                            return Some(v);
+                        }
                     }
                 }
             }
         }
 
         // 2. Try relative paths (for dev mode)
-        let dev_paths = [
-            format!("../ui/i18n/{}.json", c),
-            format!("ui/i18n/{}.json", c),
-            format!("i18n/{}.json", c),
-        ];
-        for dp in &dev_paths {
-            if let Ok(s) = std::fs::read_to_string(dp) {
-                if let Ok(v) = serde_json::from_str::<Value>(&s) {
-                    return Some(v);
+        let mut search_dirs = vec![std::env::current_dir().unwrap_or_default()];
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                search_dirs.push(exe_dir.to_path_buf());
+                if let Some(parent) = exe_dir.parent() {
+                    search_dirs.push(parent.to_path_buf());
+                    if let Some(grandparent) = parent.parent() {
+                        search_dirs.push(grandparent.to_path_buf());
+                    }
+                }
+            }
+        }
+
+        for dir in search_dirs {
+            let dev_paths = [
+                dir.join(format!("ui/i18n/{}.json", c)),
+                dir.join(format!("i18n/{}.json", c)),
+                dir.join(format!("{}.json", c)),
+                dir.join(format!("../ui/i18n/{}.json", c)),
+            ];
+            for p in dev_paths {
+                if let Ok(s) = std::fs::read_to_string(p) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&s) {
+                        return Some(v);
+                    }
                 }
             }
         }
@@ -101,6 +123,21 @@ fn get_l10n_string(v: &Value, key: &str) -> String {
     }
 }
 
+fn update_tray_menu(app_handle: &tauri::AppHandle, locale: &Value) {
+    let settings_label = get_l10n_string(locale, "tray.settings");
+    let rest_label = get_l10n_string(locale, "tray.rest_now");
+    let about_label = get_l10n_string(locale, "tray.about");
+    let quit_label = get_l10n_string(locale, "tray.quit");
+    
+    let new_menu = SystemTrayMenu::new()
+        .add_item(CustomMenuItem::new("settings".to_string(), settings_label))
+        .add_item(CustomMenuItem::new("rest_now".to_string(), rest_label))
+        .add_item(CustomMenuItem::new("about".to_string(), about_label))
+        .add_native_item(SystemTrayMenuItem::Separator)
+        .add_item(CustomMenuItem::new("quit".to_string(), quit_label));
+    let _ = app_handle.tray_handle().set_menu(new_menu);
+}
+
 #[tauri::command]
 fn get_settings(state: tauri::State<Arc<AppState>>) -> Settings {
     state.settings.lock().unwrap().clone()
@@ -109,6 +146,7 @@ fn get_settings(state: tauri::State<Arc<AppState>>) -> Settings {
 #[tauri::command]
 fn save_settings(state: tauri::State<Arc<AppState>>, settings: Settings, app_handle: tauri::AppHandle) {
     let mut s = state.settings.lock().unwrap();
+    let old_lang = s.language.clone();
     *s = settings.clone();
     
     // Apply opacity to reminder window if it exists
@@ -121,19 +159,16 @@ fn save_settings(state: tauri::State<Arc<AppState>>, settings: Settings, app_han
     // Save to disk (simplified)
     let _ = std::fs::write("settings.json", serde_json::to_string(&*s).unwrap());
 
-    // Update tray menu labels according to new language
-    if let Some(locale) = load_locale(&app_handle, &s.language) {
-        let settings_label = get_l10n_string(&locale, "tray.settings");
-        let rest_label = get_l10n_string(&locale, "tray.rest_now");
-        let about_label = get_l10n_string(&locale, "tray.about");
-        let quit_label = get_l10n_string(&locale, "tray.quit");
-        let new_menu = SystemTrayMenu::new()
-            .add_item(CustomMenuItem::new("settings".to_string(), settings_label))
-            .add_item(CustomMenuItem::new("rest_now".to_string(), rest_label))
-            .add_item(CustomMenuItem::new("about".to_string(), about_label))
-            .add_native_item(SystemTrayMenuItem::Separator)
-            .add_item(CustomMenuItem::new("quit".to_string(), quit_label));
-        let _ = app_handle.tray_handle().set_menu(new_menu);
+    // Apply autostart setting (Windows)
+    set_windows_autostart(s.auto_start, &app_handle);
+
+    // Update tray menu labels if language changed
+    if old_lang != s.language {
+        if let Some(locale) = load_locale(Some(&app_handle), &s.language) {
+            let mut state_locale = state.locale.lock().unwrap();
+            *state_locale = locale.clone();
+            update_tray_menu(&app_handle, &locale);
+        }
     }
 }
 
@@ -158,6 +193,37 @@ fn set_window_size(app_handle: tauri::AppHandle, width: f64, height: f64) {
         let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
     }
 }
+
+// Configure autostart on Windows by adding/removing Run registry entry
+#[cfg(target_os = "windows")]
+fn set_windows_autostart(enable: bool, _app_handle: &tauri::AppHandle) {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        let exe_str = exe_path.display().to_string();
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        match hkcu.open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Run", KEY_WRITE) {
+            Ok(run_key) => {
+                if enable {
+                    let _ = run_key.set_value("EyeProtection", &format!("\"{}\"", exe_str));
+                } else {
+                    let _ = run_key.delete_value("EyeProtection");
+                }
+            }
+            Err(_) => {
+                if let Ok((run_key, _disp)) = hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run") {
+                    if enable {
+                        let _ = run_key.set_value("EyeProtection", &format!("\"{}\"", exe_str));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_windows_autostart(_enable: bool, _app_handle: &tauri::AppHandle) {}
 
 fn show_reminder_windows(app_handle: &tauri::AppHandle) {
     let monitors = if let Some(win) = app_handle.windows().values().next() {
@@ -209,11 +275,17 @@ fn main() {
         Settings::default()
     };
 
+    // Pre-load locale
+    let initial_locale = load_locale(None, &settings.language).unwrap_or_else(|| {
+        serde_json::from_str(r#"{"tray":{"work_timer":"Work Duration","settings":"Settings","rest_now":"Rest Now","about":"About","quit":"Quit"}}"#).unwrap()
+    });
+
     let state = Arc::new(AppState {
         settings: Mutex::new(settings),
         last_activity: Mutex::new(Instant::now()),
         accumulated_work_time: Mutex::new(Duration::from_secs(0)),
         is_resting: Mutex::new(false),
+        locale: Mutex::new(initial_locale),
     });
 
     let state_clone = state.clone();
@@ -231,11 +303,11 @@ fn main() {
 
     // Initial tray labels (will be updated in setup with actual locale)
     let tray_menu = SystemTrayMenu::new()
-        .add_item(CustomMenuItem::new("settings".to_string(), "设置 / Settings"))
-        .add_item(CustomMenuItem::new("rest_now".to_string(), "立即休息 / Rest Now"))
-        .add_item(CustomMenuItem::new("about".to_string(), "关于 / About"))
+        .add_item(CustomMenuItem::new("settings".to_string(), "..."))
+        .add_item(CustomMenuItem::new("rest_now".to_string(), "..."))
+        .add_item(CustomMenuItem::new("about".to_string(), "..."))
         .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(CustomMenuItem::new("quit".to_string(), "退出 / Quit"));
+        .add_item(CustomMenuItem::new("quit".to_string(), "..."));
 
     let system_tray = SystemTray::new().with_menu(tray_menu);
 
@@ -287,22 +359,19 @@ fn main() {
             let app_handle = app.handle();
             let state = state.clone();
 
-            // Initial tray update with correct path
+            // Initial tray update
             {
                 let s = state.settings.lock().unwrap();
-                if let Some(locale) = load_locale(&app_handle, &s.language) {
-                    let settings_label = get_l10n_string(&locale, "tray.settings");
-                    let rest_label = get_l10n_string(&locale, "tray.rest_now");
-                    let about_label = get_l10n_string(&locale, "tray.about");
-                    let quit_label = get_l10n_string(&locale, "tray.quit");
-                    let new_menu = SystemTrayMenu::new()
-                        .add_item(CustomMenuItem::new("settings".to_string(), settings_label))
-                        .add_item(CustomMenuItem::new("rest_now".to_string(), rest_label))
-                        .add_item(CustomMenuItem::new("about".to_string(), about_label))
-                        .add_native_item(SystemTrayMenuItem::Separator)
-                        .add_item(CustomMenuItem::new("quit".to_string(), quit_label));
-                    let _ = app_handle.tray_handle().set_menu(new_menu);
+                let mut state_locale = state.locale.lock().unwrap();
+                
+                // Try to reload with app_handle for resource resolution
+                if let Some(locale) = load_locale(Some(&app_handle), &s.language) {
+                    *state_locale = locale;
                 }
+                update_tray_menu(&app_handle, &*state_locale);
+
+                // Apply autostart setting on startup
+                set_windows_autostart(s.auto_start, &app_handle);
             }
             
             // Timer loop
@@ -313,16 +382,17 @@ fn main() {
                     let now = Instant::now();
                     let settings = state.settings.lock().unwrap().clone();
                     let last_activity = *state.last_activity.lock().unwrap();
-                    let mut accumulated = state.accumulated_work_time.lock().unwrap();
+                    
+                    // Lock order: is_resting -> accumulated
                     let mut is_resting = state.is_resting.lock().unwrap();
+                    let mut accumulated = state.accumulated_work_time.lock().unwrap();
+                    
+                    let gap = now.duration_since(last_activity);
                     
                     // Logic 1: If operation interval > rest time, reset work time
-                    // "当操作间隔大于休息时间段，则重置操作时长"
-                    let gap = now.duration_since(last_activity);
                     if gap > Duration::from_secs(settings.rest_time * 60) {
                         *accumulated = Duration::from_secs(0);
                         
-                        // If the reminder was open, and user has been idle long enough, close it
                         if *is_resting {
                             *is_resting = false;
                             for window in app_handle.windows().values() {
@@ -335,14 +405,7 @@ fn main() {
                     
                     if !*is_resting {
                         // Logic 2: Accumulate work time
-                        // Only accumulate if we are active? Or just wall clock time?
-                        // "当操作时长大于..." usually means continuous usage.
-                        // If I am idle for 1 minute, does it count?
-                        // Usually yes, unless the gap is large enough to be a "rest".
-                        // So we just add 1 second, unless we just reset it.
-                        
-                        // However, if we just reset it (gap > rest_time), it is 0.
-                        // If gap < rest_time, we are "working".
+                        // We count it as work if the gap is less than rest_time
                         if gap <= Duration::from_secs(settings.rest_time * 60) {
                              *accumulated += Duration::from_secs(1);
                         }
@@ -354,15 +417,21 @@ fn main() {
                         let seconds = total_secs % 60;
                         let time_str = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
                         
-                        if let Some(locale) = load_locale(&app_handle, &settings.language) {
-                            let prefix = get_l10n_string(&locale, "tray.work_timer");
-                            let _ = app_handle.tray_handle().set_tooltip(&format!("{}: {}", prefix, time_str));
-                        }
+                        let locale = state.locale.lock().unwrap();
+                        let prefix = get_l10n_string(&locale, "tray.work_timer");
+                        
+                        // Add activity status to tooltip
+                        let status = if gap > Duration::from_secs(10) {
+                            if settings.language == "zh-CN" { " (空闲)" } else { " (Idle)" }
+                        } else {
+                            if settings.language == "zh-CN" { " (活跃)" } else { " (Active)" }
+                        };
+                        
+                        let _ = app_handle.tray_handle().set_tooltip(&format!("{}: {}{}", prefix, time_str, status));
                         
                         // Logic 3: Trigger reminder
                         if *accumulated >= Duration::from_secs(settings.work_time * 60) {
                             *is_resting = true;
-                            // Show reminder
                             show_reminder_windows(&app_handle);
                         }
                     }

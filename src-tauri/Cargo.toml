@@ -1,6 +1,6 @@
 [package]
-name = "eye-protection"
-version = "0.1.0"
+name = "EyeProtection"
+version = "0.0.1"
 description = "Eye Protection App"
 authors = ["You"]
 edition = "2021"
@@ -20,3 +20,6 @@ anyhow = "1.0"
 [features]
 default = []
 custom-protocol = ["tauri/custom-protocol"]
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.10"
