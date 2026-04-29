@@ -3,16 +3,17 @@
     windows_subsystem = "windows"
 )]
 
+use rdev::{listen, Event};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 use tauri::{
     CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem,
     WindowBuilder, WindowUrl,
 };
-use rdev::{listen, Event};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -36,6 +37,60 @@ impl Default for Settings {
     }
 }
 
+fn settings_file_path(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
+    let resolver = app_handle.path_resolver();
+    resolver
+        .app_config_dir()
+        .or_else(|| resolver.app_data_dir())
+        .map(|dir| dir.join("settings.json"))
+}
+
+fn read_settings_file(path: &PathBuf) -> Option<Settings> {
+    if !path.is_file() {
+        return None;
+    }
+
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Settings>(&content).ok())
+}
+
+fn save_settings_to_disk(app_handle: &tauri::AppHandle, settings: &Settings) {
+    let Some(path) = settings_file_path(app_handle) else {
+        return;
+    };
+
+    if let Some(parent) = path.parent() {
+        if !parent.exists() && std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+
+        if !parent.is_dir() {
+            return;
+        }
+    }
+
+    if let Ok(content) = serde_json::to_string(settings) {
+        let _ = std::fs::write(path, content);
+    }
+}
+
+fn load_settings_from_disk(app_handle: &tauri::AppHandle) -> Settings {
+    if let Some(path) = settings_file_path(app_handle) {
+        if let Some(settings) = read_settings_file(&path) {
+            return settings;
+        }
+    }
+
+    let legacy_path = PathBuf::from("settings.json");
+    if let Some(settings) = read_settings_file(&legacy_path) {
+        save_settings_to_disk(app_handle, &settings);
+        return settings;
+    }
+
+    Settings::default()
+}
+
 struct AppState {
     settings: Mutex<Settings>,
     last_activity: Mutex<Instant>,
@@ -52,10 +107,12 @@ fn load_locale(app_handle: Option<&tauri::AppHandle>, lang: &str) -> Option<Valu
         "zh-CN".to_string(),
         "en".to_string(),
     ];
-    
+
     for c in &candidates {
-        if c.is_empty() { continue; }
-        
+        if c.is_empty() {
+            continue;
+        }
+
         // 1. Try resolve via Tauri resource (for bundled app)
         if let Some(handle) = app_handle {
             let resource_paths = [
@@ -128,7 +185,7 @@ fn update_tray_menu(app_handle: &tauri::AppHandle, locale: &Value) {
     let rest_label = get_l10n_string(locale, "tray.rest_now");
     let about_label = get_l10n_string(locale, "tray.about");
     let quit_label = get_l10n_string(locale, "tray.quit");
-    
+
     let new_menu = SystemTrayMenu::new()
         .add_item(CustomMenuItem::new("settings".to_string(), settings_label))
         .add_item(CustomMenuItem::new("rest_now".to_string(), rest_label))
@@ -144,20 +201,23 @@ fn get_settings(state: tauri::State<Arc<AppState>>) -> Settings {
 }
 
 #[tauri::command]
-fn save_settings(state: tauri::State<Arc<AppState>>, settings: Settings, app_handle: tauri::AppHandle) {
+fn save_settings(
+    state: tauri::State<Arc<AppState>>,
+    settings: Settings,
+    app_handle: tauri::AppHandle,
+) {
     let mut s = state.settings.lock().unwrap();
     let old_lang = s.language.clone();
     *s = settings.clone();
-    
+
     // Apply opacity to reminder window if it exists
     for window in app_handle.windows().values() {
         if window.label().starts_with("reminder") {
             let _ = window.emit("update-settings", settings.clone());
         }
     }
-    
-    // Save to disk (simplified)
-    let _ = std::fs::write("settings.json", serde_json::to_string(&*s).unwrap());
+
+    save_settings_to_disk(&app_handle, &s);
 
     // Apply autostart setting (Windows)
     set_windows_autostart(s.auto_start, &app_handle);
@@ -176,10 +236,10 @@ fn save_settings(state: tauri::State<Arc<AppState>>, settings: Settings, app_han
 fn close_reminder(state: tauri::State<Arc<AppState>>, app_handle: tauri::AppHandle) {
     let mut is_resting = state.is_resting.lock().unwrap();
     *is_resting = false;
-    
+
     let mut accumulated = state.accumulated_work_time.lock().unwrap();
     *accumulated = Duration::from_secs(0);
-    
+
     for window in app_handle.windows().values() {
         if window.label().starts_with("reminder") {
             let _ = window.hide();
@@ -203,7 +263,10 @@ fn set_windows_autostart(enable: bool, _app_handle: &tauri::AppHandle) {
     if let Ok(exe_path) = std::env::current_exe() {
         let exe_str = exe_path.display().to_string();
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        match hkcu.open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Run", KEY_WRITE) {
+        match hkcu.open_subkey_with_flags(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            KEY_WRITE,
+        ) {
             Ok(run_key) => {
                 if enable {
                     let _ = run_key.set_value("EyeProtection", &format!("\"{}\"", exe_str));
@@ -212,7 +275,9 @@ fn set_windows_autostart(enable: bool, _app_handle: &tauri::AppHandle) {
                 }
             }
             Err(_) => {
-                if let Ok((run_key, _disp)) = hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run") {
+                if let Ok((run_key, _disp)) =
+                    hkcu.create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+                {
                     if enable {
                         let _ = run_key.set_value("EyeProtection", &format!("\"{}\"", exe_str));
                     }
@@ -231,10 +296,14 @@ fn show_reminder_windows(app_handle: &tauri::AppHandle) {
     } else {
         return;
     };
-    
+
     for (i, monitor) in monitors.iter().enumerate() {
-        let label = if i == 0 { "reminder".to_string() } else { format!("reminder_{}", i) };
-        
+        let label = if i == 0 {
+            "reminder".to_string()
+        } else {
+            format!("reminder_{}", i)
+        };
+
         if let Some(win) = app_handle.get_window(&label) {
             let pos = monitor.position();
             let _ = win.set_fullscreen(false);
@@ -244,17 +313,14 @@ fn show_reminder_windows(app_handle: &tauri::AppHandle) {
             let _ = win.set_focus();
             let _ = win.emit("start-rest", ());
         } else {
-            let res = WindowBuilder::new(
-                app_handle,
-                &label,
-                WindowUrl::App("reminder.html".into())
-            )
-            .transparent(true)
-            .always_on_top(true)
-            .decorations(false)
-            .skip_taskbar(true)
-            .visible(false)
-            .build();
+            let res =
+                WindowBuilder::new(app_handle, &label, WindowUrl::App("reminder.html".into()))
+                    .transparent(true)
+                    .always_on_top(true)
+                    .decorations(false)
+                    .skip_taskbar(true)
+                    .visible(false)
+                    .build();
 
             if let Ok(win) = res {
                 let pos = monitor.position();
@@ -269,11 +335,7 @@ fn show_reminder_windows(app_handle: &tauri::AppHandle) {
 }
 
 fn main() {
-    let settings = if let Ok(content) = std::fs::read_to_string("settings.json") {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        Settings::default()
-    };
+    let settings = Settings::default();
 
     // Pre-load locale
     let initial_locale = load_locale(None, &settings.language).unwrap_or_else(|| {
@@ -289,7 +351,7 @@ fn main() {
     });
 
     let state_clone = state.clone();
-    
+
     // Input monitoring thread
     thread::spawn(move || {
         let callback = move |_event: Event| {
@@ -315,34 +377,32 @@ fn main() {
         .manage(state.clone())
         .system_tray(system_tray)
         .on_system_tray_event(|app, event| match event {
-            SystemTrayEvent::MenuItemClick { id, .. } => {
-                match id.as_str() {
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    "settings" => {
-                        if let Some(window) = app.get_window("settings") {
-                            let _ = window.emit("show-settings", ());
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "about" => {
-                        if let Some(window) = app.get_window("about") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "rest_now" => {
-                        let state: tauri::State<Arc<AppState>> = app.state();
-                        let mut is_resting = state.is_resting.lock().unwrap();
-                        *is_resting = true;
-                        
-                        show_reminder_windows(&app.app_handle());
-                    }
-                    _ => {}
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                "quit" => {
+                    app.exit(0);
                 }
-            }
+                "settings" => {
+                    if let Some(window) = app.get_window("settings") {
+                        let _ = window.emit("show-settings", ());
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                "about" => {
+                    if let Some(window) = app.get_window("about") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                "rest_now" => {
+                    let state: tauri::State<Arc<AppState>> = app.state();
+                    let mut is_resting = state.is_resting.lock().unwrap();
+                    *is_resting = true;
+
+                    show_reminder_windows(&app.app_handle());
+                }
+                _ => {}
+            },
             _ => {}
         })
         .on_window_event(|event| match event.event() {
@@ -361,38 +421,37 @@ fn main() {
 
             // Initial tray update
             {
-                let s = state.settings.lock().unwrap();
+                let loaded_settings = load_settings_from_disk(&app_handle);
+                let mut s = state.settings.lock().unwrap();
+                *s = loaded_settings;
                 let mut state_locale = state.locale.lock().unwrap();
-                
+
                 // Try to reload with app_handle for resource resolution
                 if let Some(locale) = load_locale(Some(&app_handle), &s.language) {
                     *state_locale = locale;
                 }
                 update_tray_menu(&app_handle, &*state_locale);
-
-                // Apply autostart setting on startup
-                set_windows_autostart(s.auto_start, &app_handle);
             }
-            
+
             // Timer loop
             thread::spawn(move || {
                 loop {
                     thread::sleep(Duration::from_secs(1));
-                    
+
                     let now = Instant::now();
                     let settings = state.settings.lock().unwrap().clone();
                     let last_activity = *state.last_activity.lock().unwrap();
-                    
+
                     // Lock order: is_resting -> accumulated
                     let mut is_resting = state.is_resting.lock().unwrap();
                     let mut accumulated = state.accumulated_work_time.lock().unwrap();
-                    
+
                     let gap = now.duration_since(last_activity);
-                    
+
                     // Logic 1: If operation interval > rest time, reset work time
                     if gap > Duration::from_secs(settings.rest_time * 60) {
                         *accumulated = Duration::from_secs(0);
-                        
+
                         if *is_resting {
                             *is_resting = false;
                             for window in app_handle.windows().values() {
@@ -402,33 +461,43 @@ fn main() {
                             }
                         }
                     }
-                    
+
                     if !*is_resting {
                         // Logic 2: Accumulate work time
                         // We count it as work if the gap is less than rest_time
                         if gap <= Duration::from_secs(settings.rest_time * 60) {
-                             *accumulated += Duration::from_secs(1);
+                            *accumulated += Duration::from_secs(1);
                         }
-                        
+
                         // Update tray tooltip
                         let total_secs = accumulated.as_secs();
                         let hours = total_secs / 3600;
                         let minutes = (total_secs % 3600) / 60;
                         let seconds = total_secs % 60;
                         let time_str = format!("{:02}:{:02}:{:02}", hours, minutes, seconds);
-                        
+
                         let locale = state.locale.lock().unwrap();
                         let prefix = get_l10n_string(&locale, "tray.work_timer");
-                        
+
                         // Add activity status to tooltip
                         let status = if gap > Duration::from_secs(10) {
-                            if settings.language == "zh-CN" { " (空闲)" } else { " (Idle)" }
+                            if settings.language == "zh-CN" {
+                                " (空闲)"
+                            } else {
+                                " (Idle)"
+                            }
                         } else {
-                            if settings.language == "zh-CN" { " (活跃)" } else { " (Active)" }
+                            if settings.language == "zh-CN" {
+                                " (活跃)"
+                            } else {
+                                " (Active)"
+                            }
                         };
-                        
-                        let _ = app_handle.tray_handle().set_tooltip(&format!("{}: {}{}", prefix, time_str, status));
-                        
+
+                        let _ = app_handle
+                            .tray_handle()
+                            .set_tooltip(&format!("{}: {}{}", prefix, time_str, status));
+
                         // Logic 3: Trigger reminder
                         if *accumulated >= Duration::from_secs(settings.work_time * 60) {
                             *is_resting = true;
@@ -437,10 +506,15 @@ fn main() {
                     }
                 }
             });
-            
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_settings, save_settings, close_reminder, set_window_size])
+        .invoke_handler(tauri::generate_handler![
+            get_settings,
+            save_settings,
+            close_reminder,
+            set_window_size
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

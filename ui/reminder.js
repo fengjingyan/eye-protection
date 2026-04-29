@@ -3,7 +3,17 @@ const listen = window.__TAURI__.event.listen;
 
 // 获取DOM元素
 const countdownEl = document.getElementById('countdown');
+const currentTimeEl = document.getElementById('currentTime');
 const closeBtn = document.getElementById('closeBtn');
+
+function updateCurrentTime() {
+    const now = new Date();
+    currentTimeEl.textContent = now.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+}
 
 // 倒计时功能
 async function startCountdown() {
@@ -20,6 +30,8 @@ async function startCountdown() {
         
         // 更新倒计时显示
         function updateCountdown() {
+            updateCurrentTime();
+
             const minutes = Math.floor(remainingTime / 60);
             const seconds = remainingTime % 60;
             countdownEl.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
