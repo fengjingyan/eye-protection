@@ -16,7 +16,8 @@ function updateCurrentTime() {
 }
 
 // 倒计时功能
-async function startCountdown() {
+// restSecs: 可选，指定休息时长（秒）；未传入时回退到 settings.rest_time
+async function startCountdown(restSecs) {
     try {
         // 从主进程获取设置
         const settings = await invoke('get_settings');
@@ -26,7 +27,7 @@ async function startCountdown() {
             document.body.style.backgroundColor = `rgba(0, 128, 128, ${settings.opacity})`;
         }
 
-        let remainingTime = settings.rest_time * 60; // 转换为秒
+        let remainingTime = (restSecs !== undefined) ? restSecs : settings.rest_time * 60; // 转换为秒
         
         // 更新倒计时显示
         function updateCountdown() {
@@ -65,8 +66,8 @@ closeBtn.addEventListener('click', () => {
 // 初始化
 window.addEventListener('DOMContentLoaded', () => {
     startCountdown();
-    listen('start-rest', () => {
-        startCountdown();
+    listen('start-rest', (event) => {
+        startCountdown(event.payload);
     });
     listen('update-settings', (event) => {
         const settings = event.payload;

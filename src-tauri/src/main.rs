@@ -15,6 +15,11 @@ use tauri::{
     WindowBuilder, WindowUrl,
 };
 
+// 长休息阈值：累计工作 10 小时
+const LONG_WORK_THRESHOLD_SECS: u64 = 10 * 60 * 60;
+// 长休息时长：5 分钟
+const LONG_REST_SECS: u64 = 5 * 60;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 struct Settings {
@@ -28,8 +33,8 @@ struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            work_time: 40,
-            rest_time: 5,
+            work_time: 10,
+            rest_time: 1,
             opacity: 0.8,
             auto_start: false,
             language: "zh-CN".to_string(),
@@ -95,7 +100,9 @@ struct AppState {
     settings: Mutex<Settings>,
     last_activity: Mutex<Instant>,
     accumulated_work_time: Mutex<Duration>,
+    long_accumulated_work_time: Mutex<Duration>,
     is_resting: Mutex<bool>,
+    is_long_resting: Mutex<bool>,
     locale: Mutex<Value>,
 }
 
@@ -235,10 +242,23 @@ fn save_settings(
 #[tauri::command]
 fn close_reminder(state: tauri::State<Arc<AppState>>, app_handle: tauri::AppHandle) {
     let mut is_resting = state.is_resting.lock().unwrap();
-    *is_resting = false;
-
+    let mut is_long_resting = state.is_long_resting.lock().unwrap();
     let mut accumulated = state.accumulated_work_time.lock().unwrap();
+    let mut long_accumulated = state.long_accumulated_work_time.lock().unwrap();
+
+    let was_long_rest = *is_long_resting;
+    *is_resting = false;
+    *is_long_resting = false;
     *accumulated = Duration::from_secs(0);
+    // 长休息结束后重置累计总工时，短休息不重置
+    if was_long_rest {
+        *long_accumulated = Duration::from_secs(0);
+    }
+
+    drop(is_resting);
+    drop(is_long_resting);
+    drop(accumulated);
+    drop(long_accumulated);
 
     for window in app_handle.windows().values() {
         if window.label().starts_with("reminder") {
@@ -290,7 +310,7 @@ fn set_windows_autostart(enable: bool, _app_handle: &tauri::AppHandle) {
 #[cfg(not(target_os = "windows"))]
 fn set_windows_autostart(_enable: bool, _app_handle: &tauri::AppHandle) {}
 
-fn show_reminder_windows(app_handle: &tauri::AppHandle) {
+fn show_reminder_windows(app_handle: &tauri::AppHandle, rest_secs: u64) {
     let monitors = if let Some(win) = app_handle.windows().values().next() {
         win.available_monitors().unwrap_or_default()
     } else {
@@ -311,7 +331,7 @@ fn show_reminder_windows(app_handle: &tauri::AppHandle) {
             let _ = win.set_fullscreen(true);
             let _ = win.show();
             let _ = win.set_focus();
-            let _ = win.emit("start-rest", ());
+            let _ = win.emit("start-rest", rest_secs);
         } else {
             let res =
                 WindowBuilder::new(app_handle, &label, WindowUrl::App("reminder.html".into()))
@@ -328,7 +348,7 @@ fn show_reminder_windows(app_handle: &tauri::AppHandle) {
                 let _ = win.set_fullscreen(true);
                 let _ = win.show();
                 let _ = win.set_focus();
-                let _ = win.emit("start-rest", ());
+                let _ = win.emit("start-rest", rest_secs);
             }
         }
     }
@@ -346,7 +366,9 @@ fn main() {
         settings: Mutex::new(settings),
         last_activity: Mutex::new(Instant::now()),
         accumulated_work_time: Mutex::new(Duration::from_secs(0)),
+        long_accumulated_work_time: Mutex::new(Duration::from_secs(0)),
         is_resting: Mutex::new(false),
+        is_long_resting: Mutex::new(false),
         locale: Mutex::new(initial_locale),
     });
 
@@ -396,10 +418,15 @@ fn main() {
                 }
                 "rest_now" => {
                     let state: tauri::State<Arc<AppState>> = app.state();
+                    let rest_secs = {
+                        let s = state.settings.lock().unwrap();
+                        s.rest_time * 60
+                    };
                     let mut is_resting = state.is_resting.lock().unwrap();
                     *is_resting = true;
+                    drop(is_resting);
 
-                    show_reminder_windows(&app.app_handle());
+                    show_reminder_windows(&app.app_handle(), rest_secs);
                 }
                 _ => {}
             },
@@ -442,31 +469,32 @@ fn main() {
                     let settings = state.settings.lock().unwrap().clone();
                     let last_activity = *state.last_activity.lock().unwrap();
 
-                    // Lock order: is_resting -> accumulated
+                    // 锁顺序: is_resting -> is_long_resting -> accumulated -> long_accumulated
                     let mut is_resting = state.is_resting.lock().unwrap();
+                    let mut is_long_resting = state.is_long_resting.lock().unwrap();
                     let mut accumulated = state.accumulated_work_time.lock().unwrap();
+                    let mut long_accumulated = state.long_accumulated_work_time.lock().unwrap();
 
                     let gap = now.duration_since(last_activity);
+                    let rest_threshold = Duration::from_secs(settings.rest_time * 60);
 
-                    // Logic 1: If operation interval > rest time, reset work time
-                    if gap > Duration::from_secs(settings.rest_time * 60) {
+                    let mut hide_windows = false;
+                    let mut show_rest: Option<u64> = None;
+
+                    // Logic 1: 空闲超过休息时长 -> 重置短休息计时器（不影响累计总工时）
+                    if gap > rest_threshold {
                         *accumulated = Duration::from_secs(0);
-
                         if *is_resting {
                             *is_resting = false;
-                            for window in app_handle.windows().values() {
-                                if window.label().starts_with("reminder") {
-                                    let _ = window.hide();
-                                }
-                            }
+                            hide_windows = true;
                         }
                     }
 
-                    if !*is_resting {
-                        // Logic 2: Accumulate work time
-                        // We count it as work if the gap is less than rest_time
-                        if gap <= Duration::from_secs(settings.rest_time * 60) {
+                    if !*is_resting && !*is_long_resting {
+                        // Logic 2: 活跃时同时累计短计时器和总工时
+                        if gap <= rest_threshold {
                             *accumulated += Duration::from_secs(1);
+                            *long_accumulated += Duration::from_secs(1);
                         }
 
                         // Update tray tooltip
@@ -479,7 +507,6 @@ fn main() {
                         let locale = state.locale.lock().unwrap();
                         let prefix = get_l10n_string(&locale, "tray.work_timer");
 
-                        // Add activity status to tooltip
                         let status = if gap > Duration::from_secs(10) {
                             if settings.language == "zh-CN" {
                                 " (空闲)"
@@ -498,11 +525,32 @@ fn main() {
                             .tray_handle()
                             .set_tooltip(&format!("{}: {}{}", prefix, time_str, status));
 
-                        // Logic 3: Trigger reminder
-                        if *accumulated >= Duration::from_secs(settings.work_time * 60) {
-                            *is_resting = true;
-                            show_reminder_windows(&app_handle);
+                        // Logic 3a: 累计工作满 10 小时 -> 触发长休息（优先级高）
+                        if *long_accumulated >= Duration::from_secs(LONG_WORK_THRESHOLD_SECS) {
+                            *is_long_resting = true;
+                            show_rest = Some(LONG_REST_SECS);
                         }
+                        // Logic 3b: 本轮工作满 work_time 分钟 -> 触发短休息
+                        else if *accumulated >= Duration::from_secs(settings.work_time * 60) {
+                            *is_resting = true;
+                            show_rest = Some(settings.rest_time * 60);
+                        }
+                    }
+
+                    drop(is_resting);
+                    drop(is_long_resting);
+                    drop(accumulated);
+                    drop(long_accumulated);
+
+                    if hide_windows {
+                        for window in app_handle.windows().values() {
+                            if window.label().starts_with("reminder") {
+                                let _ = window.hide();
+                            }
+                        }
+                    }
+                    if let Some(secs) = show_rest {
+                        show_reminder_windows(&app_handle, secs);
                     }
                 }
             });
