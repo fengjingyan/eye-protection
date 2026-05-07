@@ -1,16 +1,34 @@
 {
   "settings": {
     "title": "Eye Protection - Settings",
-    "workTime": "Continuous use time (minutes)",
-    "restTime": "Rest time (minutes)",
+    "section": {
+      "timer": "Work Timer",
+      "appearance": "Appearance",
+      "system": "System"
+    },
+    "workTime": "Work interval",
+    "workTimeHint": "Recommended: 10~20 min",
+    "restTime": "Short break duration",
+    "restTimeHint": "Recommended: 1~5 min",
+    "longWorkThreshold": "Long-work threshold",
+    "longWorkThresholdHint": "Trigger long break after this total",
+    "longRestTime": "Long break duration",
+    "longRestTimeHint": "Forced rest after accumulated overwork",
+    "unitMin": "min",
     "opacity": "Reminder window opacity",
+    "language": "Language",
     "autoStart": "Auto start at login",
     "ok": "OK",
     "apply": "Apply",
     "cancel": "Cancel",
     "save": "Save settings",
     "saved": "Settings saved!",
-    "save_failed": "Save failed: {err}"
+    "save_failed": "Save failed: {err}",
+    "validation": {
+      "thresholdTooSmall": "Long-work threshold must be ≥ 2× work interval (minimum {min} min). Save is blocked.",
+      "thresholdExact": "Note: Long break will trigger after round {round} completes",
+      "thresholdMid": "Note: Long break will trigger ~{mins} min into round {round}"
+    }
   },
   "reminder": {
     "title": "Time to rest!",

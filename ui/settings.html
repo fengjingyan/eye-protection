@@ -6,132 +6,331 @@
     <title data-i18n="settings.title">眼睛保护程序 - 设置</title>
     <link rel="icon" href="/favicon.ico">
     <style>
+        * { box-sizing: border-box; }
         body {
-            font-family: 'Microsoft YaHei', sans-serif;
-            margin: 20px;
-            background-color: #f5f5f5;
+            font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+            margin: 0;
+            padding: 16px 20px 20px;
+            background-color: #f0f2f5;
             user-select: none;
+            color: #333;
         }
         h1 {
             text-align: center;
-            color: #333;
-            font-size: 24px;
-            margin-bottom: 20px;
+            color: #2c3e50;
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0 0 16px;
+            letter-spacing: 0.5px;
         }
-        .setting-group {
-            background-color: white;
-            padding: 15px;
-            margin-bottom: 15px;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+
+        /* Section card */
+        .section-card {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            margin-bottom: 12px;
+            overflow: hidden;
         }
-        .setting-item {
-            margin-bottom: 15px;
-        }
-        .setting-item:last-child {
-            margin-bottom: 0;
-        }
-        .setting-label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            color: #555;
-        }
-        .setting-input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 3px;
-            font-size: 14px;
-            box-sizing: border-box;
-        }
-        .slider-container {
+        .section-header {
             display: flex;
             align-items: center;
+            gap: 7px;
+            padding: 9px 14px 8px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+        }
+        .section-header .section-icon {
+            font-size: 15px;
+        }
+        .section-body {
+            padding: 10px 14px 12px;
+        }
+
+        /* Row layout: label on left, control on right */
+        .setting-row {
+            display: flex;
+            align-items: flex-start;
+            padding: 6px 0;
+            gap: 10px;
+        }
+        .setting-row + .setting-row {
+            border-top: 1px solid #f8f8f8;
+        }
+        .row-label {
+            flex: 0 0 150px;
+            padding-top: 7px;
+            font-size: 13px;
+            color: #444;
+            line-height: 1.3;
+        }
+        .row-hint {
+            font-size: 11px;
+            color: #aaa;
+            font-weight: normal;
+            margin-top: 2px;
+        }
+        .row-control {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        /* Number input */
+        .num-input {
+            width: 72px;
+            padding: 5px 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 13px;
+            font-family: inherit;
+            color: #333;
+            background: #fafafa;
+            transition: border-color 0.15s;
+        }
+        .num-input:focus {
+            outline: none;
+            border-color: #4a90e2;
+            background: #fff;
+        }
+        .unit-label {
+            font-size: 12px;
+            color: #888;
+        }
+
+        /* Slider */
+        .slider-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
         }
         .slider {
             flex: 1;
-            margin-right: 10px;
+            -webkit-appearance: none;
+            height: 4px;
+            background: #ddd;
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4a90e2;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
         .slider-value {
-            width: 40px;
-            text-align: center;
-            font-weight: bold;
+            min-width: 38px;
+            text-align: right;
+            font-size: 13px;
+            font-weight: 600;
+            color: #4a90e2;
         }
-        .checkbox-item {
+
+        /* Select */
+        .lang-select {
+            padding: 5px 24px 5px 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 13px;
+            font-family: inherit;
+            color: #333;
+            background: #fafafa;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 8px center;
+            transition: border-color 0.15s;
+        }
+        .lang-select:focus {
+            outline: none;
+            border-color: #4a90e2;
+        }
+
+        /* Checkbox */
+        .checkbox-row {
             display: flex;
             align-items: center;
-        }
-        .checkbox-item input {
-            margin-right: 10px;
-        }
-        .btn {
-            display: inline-block;
-            padding: 8px 20px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 3px;
-            font-size: 14px;
+            padding: 7px 0;
+            gap: 9px;
+            font-size: 13px;
+            color: #444;
             cursor: pointer;
-            min-width: 80px;
         }
-        .btn:hover {
-            background-color: #45a049;
+        .checkbox-row + .checkbox-row {
+            border-top: 1px solid #f8f8f8;
         }
+        .checkbox-row input[type="checkbox"] {
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+            accent-color: #4a90e2;
+        }
+
+        /* Buttons */
         .button-container {
             display: flex;
             justify-content: flex-end;
-            gap: 10px;
-            margin-top: 20px;
+            gap: 8px;
+            margin-top: 4px;
         }
+        .btn {
+            padding: 7px 20px;
+            border: none;
+            border-radius: 5px;
+            font-size: 13px;
+            font-family: inherit;
+            cursor: pointer;
+            min-width: 72px;
+            transition: background 0.15s, opacity 0.15s;
+        }
+        .btn-primary {
+            background: #4a90e2;
+            color: #fff;
+        }
+        .btn-primary:hover { background: #357abd; }
         .btn-secondary {
-            background-color: #f0f0f0;
-            color: #333;
+            background: #eee;
+            color: #444;
         }
-        .btn-secondary:hover {
-            background-color: #e0e0e0;
+        .btn-secondary:hover { background: #e0e0e0; }
+
+        /* Validation message */
+        .validation-msg {
+            margin-top: 8px;
+            padding: 7px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .validation-error {
+            background: #fff2f0;
+            border: 1px solid #ffccc7;
+            color: #cf1322;
+        }
+        .validation-info {
+            background: #e6f4ff;
+            border: 1px solid #91caff;
+            color: #0958d9;
         }
     </style>
 </head>
 <body>
     <h1 data-i18n="settings.title">眼睛保护程序设置</h1>
-    
-    <div class="setting-group">
-        <div class="setting-item">
-            <label class="setting-label" for="workTime" data-i18n="settings.workTime">连续使用电脑时间（分钟）</label>
-            <input type="number" id="workTime" class="setting-input" min="1" max="120" step="1">
+
+    <!-- 工作计时 -->
+    <div class="section-card">
+        <div class="section-header">
+            <span class="section-icon">⏱</span>
+            <span data-i18n="settings.section.timer">工作计时</span>
         </div>
-        
-        <div class="setting-item">
-            <label class="setting-label" for="restTime" data-i18n="settings.restTime">休息时间（分钟）</label>
-            <input type="number" id="restTime" class="setting-input" min="1" max="30" step="1">
-        </div>
-        
-        <div class="setting-item">
-            <label class="setting-label" for="opacity" data-i18n="settings.opacity">提示窗口透明度</label>
-            <div class="slider-container">
-                <input type="range" id="opacity" class="slider" min="0.1" max="1" step="0.1">
-                <span class="slider-value" id="opacityValue"></span>
+        <div class="section-body">
+            <div class="setting-row">
+                <div class="row-label">
+                    <span data-i18n="settings.workTime">连续工作时间</span>
+                    <div class="row-hint" data-i18n="settings.workTimeHint">建议 10~20 分钟</div>
+                </div>
+                <div class="row-control">
+                    <input type="number" id="workTime" class="num-input" min="1" max="120" step="1">
+                    <span class="unit-label" data-i18n="settings.unitMin">分钟</span>
+                </div>
             </div>
-        </div>
-        
-        <div class="setting-item checkbox-item">
-            <input type="checkbox" id="autoStart">
-            <label class="setting-label" for="autoStart" data-i18n="settings.autoStart">开机自启动</label>
+            <div class="setting-row">
+                <div class="row-label">
+                    <span data-i18n="settings.restTime">短暂休息时长</span>
+                    <div class="row-hint" data-i18n="settings.restTimeHint">建议 1~5 分钟</div>
+                </div>
+                <div class="row-control">
+                    <input type="number" id="restTime" class="num-input" min="1" max="30" step="1">
+                    <span class="unit-label" data-i18n="settings.unitMin">分钟</span>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div class="row-label">
+                    <span data-i18n="settings.longWorkThreshold">累计工作阈值</span>
+                    <div class="row-hint" data-i18n="settings.longWorkThresholdHint">超过此时长触发长时休息</div>
+                </div>
+                <div class="row-control">
+                    <input type="number" id="longWorkThreshold" class="num-input" min="30" max="720" step="10">
+                    <span class="unit-label" data-i18n="settings.unitMin">分钟</span>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div class="row-label">
+                    <span data-i18n="settings.longRestTime">长时休息时长</span>
+                    <div class="row-hint" data-i18n="settings.longRestTimeHint">累计超时后的强制休息时长</div>
+                </div>
+                <div class="row-control">
+                    <input type="number" id="longRestTime" class="num-input" min="1" max="30" step="1">
+                    <span class="unit-label" data-i18n="settings.unitMin">分钟</span>
+                </div>
+            </div>
+            <div id="timerValidation" class="validation-msg" hidden></div>
         </div>
     </div>
-    
+
+    <!-- 外观与提醒 -->
+    <div class="section-card">
+        <div class="section-header">
+            <span class="section-icon">🎨</span>
+            <span data-i18n="settings.section.appearance">外观与提醒</span>
+        </div>
+        <div class="section-body">
+            <div class="setting-row">
+                <div class="row-label">
+                    <span data-i18n="settings.opacity">提示窗口不透明度</span>
+                </div>
+                <div class="row-control">
+                    <div class="slider-wrap">
+                        <input type="range" id="opacity" class="slider" min="0.1" max="1" step="0.05">
+                        <span class="slider-value" id="opacityValue">80%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 系统设置 -->
+    <div class="section-card">
+        <div class="section-header">
+            <span class="section-icon">⚙️</span>
+            <span data-i18n="settings.section.system">系统设置</span>
+        </div>
+        <div class="section-body">
+            <div class="setting-row">
+                <div class="row-label">
+                    <span data-i18n="settings.language">界面语言</span>
+                </div>
+                <div class="row-control">
+                    <select id="language" class="lang-select">
+                        <option value="zh-CN">中文（简体）</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
+            </div>
+            <div class="checkbox-row">
+                <input type="checkbox" id="autoStart">
+                <label for="autoStart" data-i18n="settings.autoStart">开机自启动</label>
+            </div>
+        </div>
+    </div>
+
     <div class="button-container">
-        <button class="btn" id="okBtn" data-i18n="settings.ok">确定</button>
+        <button class="btn btn-primary" id="okBtn" data-i18n="settings.ok">确定</button>
         <button class="btn btn-secondary" id="applyBtn" data-i18n="settings.apply">应用</button>
         <button class="btn btn-secondary" id="cancelBtn" data-i18n="settings.cancel">取消</button>
     </div>
+
     <script src="i18n.js"></script>
-    <script>
-        // load and apply translations before settings.js runs
-        window.__i18n.loadLocale().then(i18n => window.__i18n.applyTranslations(i18n));
-    </script>
     <script src="settings.js"></script>
 </body>
 </html>

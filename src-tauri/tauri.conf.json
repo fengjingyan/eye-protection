@@ -45,7 +45,7 @@
         "label": "settings",
         "url": "settings.html",
         "width": 400,
-        "height": 350,
+        "height": 720,
         "resizable": false,
         "title": "Eye Protection Settings",
         "visible": false,

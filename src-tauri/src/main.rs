@@ -15,16 +15,13 @@ use tauri::{
     WindowBuilder, WindowUrl,
 };
 
-// 长休息阈值：累计工作 10 小时
-const LONG_WORK_THRESHOLD_SECS: u64 = 10 * 60 * 60;
-// 长休息时长：5 分钟
-const LONG_REST_SECS: u64 = 5 * 60;
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 struct Settings {
-    work_time: u64, // minutes
-    rest_time: u64, // minutes
+    work_time: u64,                // minutes — 连续工作时间
+    rest_time: u64,                // minutes — 短暂休息时长
+    long_work_threshold_mins: u64, // minutes — 累计工作阈值（触发长时休息）
+    long_rest_mins: u64,           // minutes — 长时休息时长
     opacity: f64,
     auto_start: bool,
     language: String,
@@ -35,6 +32,8 @@ impl Default for Settings {
         Self {
             work_time: 10,
             rest_time: 1,
+            long_work_threshold_mins: 60, // 1 hour
+            long_rest_mins: 5,
             opacity: 0.8,
             auto_start: false,
             language: "zh-CN".to_string(),
@@ -147,6 +146,11 @@ fn load_locale(app_handle: Option<&tauri::AppHandle>, lang: &str) -> Option<Valu
                     search_dirs.push(parent.to_path_buf());
                     if let Some(grandparent) = parent.parent() {
                         search_dirs.push(grandparent.to_path_buf());
+                        // great-grandparent = project root when binary is at
+                        // src-tauri/target/{debug|release}/
+                        if let Some(great_grandparent) = grandparent.parent() {
+                            search_dirs.push(great_grandparent.to_path_buf());
+                        }
                     }
                 }
             }
@@ -188,18 +192,11 @@ fn get_l10n_string(v: &Value, key: &str) -> String {
 }
 
 fn update_tray_menu(app_handle: &tauri::AppHandle, locale: &Value) {
-    let settings_label = get_l10n_string(locale, "tray.settings");
-    let rest_label = get_l10n_string(locale, "tray.rest_now");
-    let about_label = get_l10n_string(locale, "tray.about");
-    let quit_label = get_l10n_string(locale, "tray.quit");
-
-    let new_menu = SystemTrayMenu::new()
-        .add_item(CustomMenuItem::new("settings".to_string(), settings_label))
-        .add_item(CustomMenuItem::new("rest_now".to_string(), rest_label))
-        .add_item(CustomMenuItem::new("about".to_string(), about_label))
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(CustomMenuItem::new("quit".to_string(), quit_label));
-    let _ = app_handle.tray_handle().set_menu(new_menu);
+    let tray = app_handle.tray_handle();
+    let _ = tray.get_item("settings").set_title(get_l10n_string(locale, "tray.settings"));
+    let _ = tray.get_item("rest_now").set_title(get_l10n_string(locale, "tray.rest_now"));
+    let _ = tray.get_item("about").set_title(get_l10n_string(locale, "tray.about"));
+    let _ = tray.get_item("quit").set_title(get_l10n_string(locale, "tray.quit"));
 }
 
 #[tauri::command]
@@ -214,7 +211,6 @@ fn save_settings(
     app_handle: tauri::AppHandle,
 ) {
     let mut s = state.settings.lock().unwrap();
-    let old_lang = s.language.clone();
     *s = settings.clone();
 
     // Apply opacity to reminder window if it exists
@@ -229,13 +225,21 @@ fn save_settings(
     // Apply autostart setting (Windows)
     set_windows_autostart(s.auto_start, &app_handle);
 
-    // Update tray menu labels if language changed
-    if old_lang != s.language {
-        if let Some(locale) = load_locale(Some(&app_handle), &s.language) {
-            let mut state_locale = state.locale.lock().unwrap();
-            *state_locale = locale.clone();
-            update_tray_menu(&app_handle, &locale);
+    // Always reload locale and update tray so the menu stays in sync with the
+    // saved language, even when the language field itself did not change (e.g.
+    // the very first save after startup where the default "zh-CN" was already
+    // stored but the tray had fallen back to English due to a failed initial load).
+    let new_lang = s.language.clone();
+    drop(s); // release settings lock before acquiring locale lock
+    {
+        // Use freshly loaded locale if available, otherwise fall back to the
+        // already-cached state locale so the tray is always updated.
+        let fresh = load_locale(Some(&app_handle), &new_lang);
+        let mut state_locale = state.locale.lock().unwrap();
+        if let Some(locale) = fresh {
+            *state_locale = locale;
         }
+        update_tray_menu(&app_handle, &*state_locale);
     }
 }
 
@@ -359,7 +363,7 @@ fn main() {
 
     // Pre-load locale
     let initial_locale = load_locale(None, &settings.language).unwrap_or_else(|| {
-        serde_json::from_str(r#"{"tray":{"work_timer":"Work Duration","settings":"Settings","rest_now":"Rest Now","about":"About","quit":"Quit"}}"#).unwrap()
+        serde_json::from_str(r#"{"tray":{"work_timer":"工作时长","settings":"设置","rest_now":"立即休息","about":"关于","quit":"退出"}}"#).unwrap()
     });
 
     let state = Arc::new(AppState {
@@ -387,11 +391,11 @@ fn main() {
 
     // Initial tray labels (will be updated in setup with actual locale)
     let tray_menu = SystemTrayMenu::new()
-        .add_item(CustomMenuItem::new("settings".to_string(), "..."))
-        .add_item(CustomMenuItem::new("rest_now".to_string(), "..."))
-        .add_item(CustomMenuItem::new("about".to_string(), "..."))
+        .add_item(CustomMenuItem::new("settings".to_string(), "设置"))
+        .add_item(CustomMenuItem::new("rest_now".to_string(), "立即休息"))
+        .add_item(CustomMenuItem::new("about".to_string(), "关于"))
         .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(CustomMenuItem::new("quit".to_string(), "..."));
+        .add_item(CustomMenuItem::new("quit".to_string(), "退出"));
 
     let system_tray = SystemTray::new().with_menu(tray_menu);
 
@@ -405,9 +409,11 @@ fn main() {
                 }
                 "settings" => {
                     if let Some(window) = app.get_window("settings") {
-                        let _ = window.emit("show-settings", ());
                         let _ = window.show();
                         let _ = window.set_focus();
+                        // emit after show so the JS resize fires while the window
+                        // is already visible (set_size on hidden windows is unreliable)
+                        let _ = window.emit("show-settings", ());
                     }
                 }
                 "about" => {
@@ -525,10 +531,12 @@ fn main() {
                             .tray_handle()
                             .set_tooltip(&format!("{}: {}{}", prefix, time_str, status));
 
-                        // Logic 3a: 累计工作满 10 小时 -> 触发长休息（优先级高）
-                        if *long_accumulated >= Duration::from_secs(LONG_WORK_THRESHOLD_SECS) {
+                        // Logic 3a: 累计工作满阈值 -> 触发长休息（优先级高）
+                        let long_threshold_secs = settings.long_work_threshold_mins * 60;
+                        let long_rest_secs = settings.long_rest_mins * 60;
+                        if *long_accumulated >= Duration::from_secs(long_threshold_secs) {
                             *is_long_resting = true;
-                            show_rest = Some(LONG_REST_SECS);
+                            show_rest = Some(long_rest_secs);
                         }
                         // Logic 3b: 本轮工作满 work_time 分钟 -> 触发短休息
                         else if *accumulated >= Duration::from_secs(settings.work_time * 60) {
