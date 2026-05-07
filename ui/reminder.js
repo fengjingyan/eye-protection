@@ -6,6 +6,8 @@ const countdownEl = document.getElementById('countdown');
 const currentTimeEl = document.getElementById('currentTime');
 const closeBtn = document.getElementById('closeBtn');
 
+let isClosingRest = false;
+
 function updateCurrentTime() {
     const now = new Date();
     currentTimeEl.textContent = now.toLocaleTimeString([], {
@@ -27,10 +29,11 @@ async function startCountdown(restSecs) {
             document.body.style.backgroundColor = `rgba(0, 128, 128, ${settings.opacity})`;
         }
 
+        isClosingRest = false;
         let remainingTime = (restSecs !== undefined) ? restSecs : settings.rest_time * 60; // 转换为秒
         
         // 更新倒计时显示
-        function updateCountdown() {
+        async function updateCountdown() {
             updateCurrentTime();
 
             const minutes = Math.floor(remainingTime / 60);
@@ -40,9 +43,17 @@ async function startCountdown(restSecs) {
             remainingTime--;
             
             if (remainingTime < 0) {
-                clearInterval(timer);
-                // Optional: Automatically close or just stay at 00:00
-                // invoke('close_reminder'); 
+                clearInterval(window.timer);
+                window.timer = null;
+
+                if (!isClosingRest) {
+                    isClosingRest = true;
+                    try {
+                        await invoke('close_reminder');
+                    } catch (e) {
+                        console.error('Failed to close reminder:', e);
+                    }
+                }
             }
         }
         
@@ -58,9 +69,19 @@ async function startCountdown(restSecs) {
 }
 
 // 关闭按钮点击事件
-closeBtn.addEventListener('click', () => {
+closeBtn.addEventListener('click', async () => {
     // 通知主进程关闭提醒窗口
-    invoke('close_reminder');
+    if (isClosingRest) return;
+    isClosingRest = true;
+    if (window.timer) {
+        clearInterval(window.timer);
+        window.timer = null;
+    }
+    try {
+        await invoke('close_reminder');
+    } catch (e) {
+        console.error('Failed to close reminder:', e);
+    }
 });
 
 // 初始化
