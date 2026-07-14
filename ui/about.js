@@ -3,7 +3,7 @@ const { appWindow } = window.__TAURI__.window;
 const { open } = window.__TAURI__.shell;
 
 document.getElementById('closeBtn').addEventListener('click', () => {
-    appWindow.hide();
+    appWindow.close();
 });
 
 document.getElementById('websiteLink').addEventListener('click', (e) => {

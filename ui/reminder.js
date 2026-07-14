@@ -85,8 +85,15 @@ closeBtn.addEventListener('click', async () => {
 });
 
 // 初始化
-window.addEventListener('DOMContentLoaded', () => {
-    startCountdown();
+window.addEventListener('DOMContentLoaded', async () => {
+    // 主动拉取本次休息时长，避免 start-rest 事件早于监听器注册而丢失
+    let restSecs;
+    try {
+        restSecs = await invoke('get_rest_secs');
+    } catch (e) {
+        console.warn('get_rest_secs failed, fallback to settings:', e);
+    }
+    startCountdown(restSecs);
     listen('start-rest', (event) => {
         startCountdown(event.payload);
     });

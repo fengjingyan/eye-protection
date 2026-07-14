@@ -103,6 +103,9 @@ struct AppState {
     is_resting: Mutex<bool>,
     is_long_resting: Mutex<bool>,
     locale: Mutex<Value>,
+    // 当前休息时长（秒）。休息窗口按需重建时，加载后主动拉取该值，
+    // 避免 start-rest 事件早于窗口 JS 监听器注册而丢失导致时长错误。
+    current_rest_secs: Mutex<u64>,
 }
 
 // helper: load locale json from ui/i18n
@@ -264,11 +267,19 @@ fn close_reminder(state: tauri::State<Arc<AppState>>, app_handle: tauri::AppHand
     drop(accumulated);
     drop(long_accumulated);
 
+    // 真正销毁休息窗口，回收其 WebView renderer 进程内存（而非仅隐藏）
     for window in app_handle.windows().values() {
         if window.label().starts_with("reminder") {
-            let _ = window.hide();
+            let _ = window.close();
         }
     }
+    trim_working_set();
+}
+
+// 供休息窗口加载后拉取当前休息时长（秒），避免事件竞态
+#[tauri::command]
+fn get_rest_secs(state: tauri::State<Arc<AppState>>) -> u64 {
+    *state.current_rest_secs.lock().unwrap()
 }
 
 #[tauri::command]
@@ -314,51 +325,143 @@ fn set_windows_autostart(enable: bool, _app_handle: &tauri::AppHandle) {
 #[cfg(not(target_os = "windows"))]
 fn set_windows_autostart(_enable: bool, _app_handle: &tauri::AppHandle) {}
 
-fn show_reminder_windows(app_handle: &tauri::AppHandle, rest_secs: u64) {
-    let monitors = if let Some(win) = app_handle.windows().values().next() {
-        win.available_monitors().unwrap_or_default()
-    } else {
+// Windows: 把当前进程的工作集交还给系统，降低任务管理器显示的内存占用。
+// 注意：只作用于本 Rust 进程，WebView2 的子进程是独立 PID，不受影响；
+// 真正的内存下降来自窗口按需创建/销毁与 WebView2 进程精简参数。
+#[cfg(target_os = "windows")]
+fn trim_working_set() {
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn SetProcessWorkingSetSizeEx(
+            h_process: isize,
+            dw_minimum_working_set_size: usize,
+            dw_maximum_working_set_size: usize,
+            flags: u32,
+        ) -> i32;
+    }
+    // 传入 usize::MAX (即 -1) 表示让系统清空工作集
+    unsafe {
+        let _ = SetProcessWorkingSetSizeEx(GetCurrentProcess(), usize::MAX, usize::MAX, 0);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn trim_working_set() {}
+
+// 按需创建/复用休息提醒窗口（透明、全屏、无边框、置顶）
+fn build_reminder_window(app_handle: &tauri::AppHandle, label: &str) -> Option<tauri::Window> {
+    WindowBuilder::new(app_handle, label, WindowUrl::App("reminder.html".into()))
+        .transparent(true)
+        .always_on_top(true)
+        .decorations(false)
+        .skip_taskbar(true)
+        .visible(false)
+        .fullscreen(false)
+        .build()
+        .ok()
+}
+
+// 按需显示设置窗口：存在则显示，不存在则新建（关闭时会被销毁以释放 WebView）
+fn show_settings_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_window("settings") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        let _ = win.emit("show-settings", ());
         return;
+    }
+
+    if let Ok(win) = WindowBuilder::new(app, "settings", WindowUrl::App("settings.html".into()))
+        .title("Eye Protection Settings")
+        .inner_size(400.0, 720.0)
+        .resizable(false)
+        .center()
+        .visible(false)
+        .build()
+    {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+// 按需显示关于窗口
+fn show_about_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_window("about") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return;
+    }
+
+    if let Ok(win) = WindowBuilder::new(app, "about", WindowUrl::App("about.html".into()))
+        .title("About EyeProtection")
+        .inner_size(500.0, 350.0)
+        .resizable(false)
+        .center()
+        .decorations(true)
+        .visible(false)
+        .build()
+    {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
+fn show_reminder_windows(app_handle: &tauri::AppHandle, rest_secs: u64) {
+    // 先记录本次休息时长，供窗口加载后通过 get_rest_secs 拉取
+    {
+        let state: tauri::State<Arc<AppState>> = app_handle.state();
+        *state.current_rest_secs.lock().unwrap() = rest_secs;
+    }
+
+    // 空闲时可能没有任何窗口存在。先建（或复用）主休息窗口，
+    // 才能通过它查询可用显示器，再为其余显示器各建一个。
+    let primary = match app_handle.get_window("reminder") {
+        Some(win) => win,
+        None => match build_reminder_window(app_handle, "reminder") {
+            Some(win) => win,
+            None => return,
+        },
     };
 
-    for (i, monitor) in monitors.iter().enumerate() {
-        let label = if i == 0 {
-            "reminder".to_string()
-        } else {
-            format!("reminder_{}", i)
+    let monitors = primary.available_monitors().unwrap_or_default();
+
+    // 主窗口放到第一个显示器
+    if let Some(monitor) = monitors.first() {
+        let _ = primary.set_fullscreen(false);
+        let _ = primary.set_position(tauri::Position::Physical(*monitor.position()));
+    }
+    let _ = primary.set_fullscreen(true);
+    let _ = primary.show();
+    let _ = primary.set_focus();
+    let _ = primary.emit("start-rest", rest_secs);
+
+    // 其余显示器
+    for (i, monitor) in monitors.iter().enumerate().skip(1) {
+        let label = format!("reminder_{}", i);
+        let win = match app_handle.get_window(&label) {
+            Some(win) => win,
+            None => match build_reminder_window(app_handle, &label) {
+                Some(win) => win,
+                None => continue,
+            },
         };
 
-        if let Some(win) = app_handle.get_window(&label) {
-            let pos = monitor.position();
-            let _ = win.set_fullscreen(false);
-            let _ = win.set_position(tauri::Position::Physical(*pos));
-            let _ = win.set_fullscreen(true);
-            let _ = win.show();
-            let _ = win.set_focus();
-            let _ = win.emit("start-rest", rest_secs);
-        } else {
-            let res =
-                WindowBuilder::new(app_handle, &label, WindowUrl::App("reminder.html".into()))
-                    .transparent(true)
-                    .always_on_top(true)
-                    .decorations(false)
-                    .skip_taskbar(true)
-                    .visible(false)
-                    .build();
-
-            if let Ok(win) = res {
-                let pos = monitor.position();
-                let _ = win.set_position(tauri::Position::Physical(*pos));
-                let _ = win.set_fullscreen(true);
-                let _ = win.show();
-                let _ = win.set_focus();
-                let _ = win.emit("start-rest", rest_secs);
-            }
-        }
+        let _ = win.set_fullscreen(false);
+        let _ = win.set_position(tauri::Position::Physical(*monitor.position()));
+        let _ = win.set_fullscreen(true);
+        let _ = win.show();
+        let _ = win.set_focus();
+        let _ = win.emit("start-rest", rest_secs);
     }
 }
 
 fn main() {
+    // 精简 WebView2 子进程：多窗口/多显示器共用同一 renderer 进程、限制 renderer 数量。
+    // 不关闭 GPU：休息窗口是全屏透明，走 GPU 合成比软件合成更省内存也更稳。
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--process-per-site --renderer-process-limit=1",
+    );
+
     let settings = Settings::default();
 
     // Pre-load locale
@@ -374,6 +477,7 @@ fn main() {
         is_resting: Mutex::new(false),
         is_long_resting: Mutex::new(false),
         locale: Mutex::new(initial_locale),
+        current_rest_secs: Mutex::new(0),
     });
 
     let state_clone = state.clone();
@@ -405,22 +509,14 @@ fn main() {
         .on_system_tray_event(|app, event| match event {
             SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
                 "quit" => {
-                    app.exit(0);
+                    // 用 process::exit 直接退出，绕开 ExitRequested 的 prevent_exit
+                    std::process::exit(0);
                 }
                 "settings" => {
-                    if let Some(window) = app.get_window("settings") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        // emit after show so the JS resize fires while the window
-                        // is already visible (set_size on hidden windows is unreliable)
-                        let _ = window.emit("show-settings", ());
-                    }
+                    show_settings_window(&app.app_handle());
                 }
                 "about" => {
-                    if let Some(window) = app.get_window("about") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    show_about_window(&app.app_handle());
                 }
                 "rest_now" => {
                     let state: tauri::State<Arc<AppState>> = app.state();
@@ -438,16 +534,8 @@ fn main() {
             },
             _ => {}
         })
-        .on_window_event(|event| match event.event() {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
-                let label = event.window().label();
-                if label == "settings" || label == "about" {
-                    let _ = event.window().hide();
-                    api.prevent_close();
-                }
-            }
-            _ => {}
-        })
+        // 不再拦截关闭：settings/about 关闭时直接销毁窗口以回收 WebView 内存，
+        // 下次从托盘打开会按需重建。托盘保活由 RunEvent::ExitRequested 处理。
         .setup(move |app| {
             let app_handle = app.handle();
             let state = state.clone();
@@ -553,9 +641,10 @@ fn main() {
                     if hide_windows {
                         for window in app_handle.windows().values() {
                             if window.label().starts_with("reminder") {
-                                let _ = window.hide();
+                                let _ = window.close();
                             }
                         }
+                        trim_working_set();
                     }
                     if let Some(secs) = show_rest {
                         show_reminder_windows(&app_handle, secs);
@@ -569,8 +658,15 @@ fn main() {
             get_settings,
             save_settings,
             close_reminder,
-            set_window_size
+            set_window_size,
+            get_rest_secs
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app_handle, event| {
+            // 所有窗口关闭后不退出应用，保持托盘常驻
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                api.prevent_exit();
+            }
+        });
 }

@@ -40,39 +40,7 @@
     "security": {
       "csp": null
     },
-    "windows": [
-      {
-        "label": "settings",
-        "url": "settings.html",
-        "width": 400,
-        "height": 720,
-        "resizable": false,
-        "title": "Eye Protection Settings",
-        "visible": false,
-        "center": true
-      },
-      {
-        "label": "reminder",
-        "url": "reminder.html",
-        "fullscreen": true,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "decorations": false,
-        "skipTaskbar": true,
-        "visible": false
-      },
-      {
-        "label": "about",
-        "url": "about.html",
-        "width": 500,
-        "height": 350,
-        "resizable": false,
-        "title": "About EyeProtection",
-        "visible": false,
-        "center": true,
-        "decorations": true
-      }
-    ],
+    "windows": [],
     "systemTray": {
       "iconPath": "icons/icon.png",
       "iconAsTemplate": true,

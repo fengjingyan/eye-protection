@@ -115,7 +115,7 @@ async function saveSettings(shouldClose = false) {
         currentSettings = settings;
 
         if (shouldClose) {
-            await appWindow.hide();
+            await appWindow.close();
         }
     } catch (e) {
         console.error('Failed to save settings:', e);
@@ -135,7 +135,7 @@ longWorkThresholdInput.addEventListener('input', () => validateTimerSettings());
 // 按钮点击事件
 okBtn.addEventListener('click', () => saveSettings(true));
 applyBtn.addEventListener('click', () => saveSettings(false));
-cancelBtn.addEventListener('click', () => appWindow.hide());
+cancelBtn.addEventListener('click', () => appWindow.close());
 
 // 帮助函数：测量内容并请求主进程调整窗口大小（防止出现滚动条）
 let resizeTimer = null;
