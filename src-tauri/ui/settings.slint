@@ -1,0 +1,77 @@
+import { Button, CheckBox, ComboBox, Slider, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component SettingsWindow inherits Window {
+    title: root.win_title;
+    default-font-family: "Microsoft YaHei";
+
+    // 标签（由 Rust 按 i18n 注入）
+    in property <string> win_title: "Settings";
+    in property <string> l_work;
+    in property <string> l_rest;
+    in property <string> l_lwork;
+    in property <string> l_lrest;
+    in property <string> l_op;
+    in property <string> l_lang;
+    in property <string> l_auto;
+    in property <string> l_ok;
+    in property <string> l_apply;
+    in property <string> l_cancel;
+
+    // 值（双向）
+    in-out property <int> work_time: 10;
+    in-out property <int> rest_time: 1;
+    in-out property <int> long_work: 60;
+    in-out property <int> long_rest: 5;
+    in-out property <float> op_pct: 80;
+    in-out property <int> lang_index: 0;
+    in-out property <bool> auto_start: false;
+
+    callback ok();
+    callback apply();
+    callback cancel();
+
+    VerticalBox {
+        padding: 18px;
+        spacing: 12px;
+        alignment: start;
+
+        GridLayout {
+            spacing: 10px;
+
+            Row {
+                Text { text: l_work; vertical-alignment: center; wrap: no-wrap; }
+                SpinBox { value <=> work_time; minimum: 1; maximum: 600; min-width: 200px; }
+            }
+            Row {
+                Text { text: l_rest; vertical-alignment: center; wrap: no-wrap; }
+                SpinBox { value <=> rest_time; minimum: 1; maximum: 120; }
+            }
+            Row {
+                Text { text: l_lwork; vertical-alignment: center; wrap: no-wrap; }
+                SpinBox { value <=> long_work; minimum: 1; maximum: 6000; }
+            }
+            Row {
+                Text { text: l_lrest; vertical-alignment: center; wrap: no-wrap; }
+                SpinBox { value <=> long_rest; minimum: 1; maximum: 120; }
+            }
+            Row {
+                Text { text: l_op; vertical-alignment: center; wrap: no-wrap; }
+                Slider { value <=> op_pct; minimum: 10; maximum: 100; }
+            }
+            Row {
+                Text { text: l_lang; vertical-alignment: center; wrap: no-wrap; }
+                ComboBox { model: ["zh-CN", "en"]; current-index <=> lang_index; }
+            }
+        }
+
+        CheckBox { text: l_auto; checked <=> auto_start; }
+
+        HorizontalBox {
+            padding: 0px;
+            alignment: end;
+            Button { text: l_ok; clicked => { root.ok(); } }
+            Button { text: l_apply; clicked => { root.apply(); } }
+            Button { text: l_cancel; clicked => { root.cancel(); } }
+        }
+    }
+}
